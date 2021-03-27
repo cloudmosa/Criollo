@@ -77,7 +77,7 @@ NS_ASSUME_NONNULL_END
             }
         }
         
-         __weak typeof (self) wself = self;
+         __weak __typeof (self) wself = self;
         _routeBlock = ^(CRRequest * _Nonnull request, CRResponse * _Nonnull response, CRRouteCompletionBlock _Nonnull completion) {
             [wself handleRequest:request response:response completion:completion];
         };
@@ -179,7 +179,7 @@ error:
 
     dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
     
-    __weak typeof(self) wself = self;
+    __weak __typeof(self) wself = self;
     __block BOOL didStartSendingFile = NO;
     
     __block BOOL result = YES;

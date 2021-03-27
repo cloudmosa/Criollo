@@ -58,7 +58,7 @@ NS_ASSUME_NONNULL_END
         }
         _prefix = prefix.stringByStandardizingPath;
         
-        __weak typeof(self) wself = self;
+        __weak __typeof(self) wself = self;
         _routeBlock = ^(CRRequest * _Nonnull request, CRResponse * _Nonnull response, CRRouteCompletionBlock _Nonnull completion) {
             [wself handleRequest:request response:response completion:completion];
         };
