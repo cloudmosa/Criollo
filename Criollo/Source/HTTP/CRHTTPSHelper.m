@@ -58,7 +58,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 #else
 
-- (NSString * _Nullable)creaIdentrityFileWithPassword:(NSString *)password certificate:(NSData *)certificate certificateKey:(NSData *)certificateKey withError:(NSError *__autoreleasing  _Nullable * _Nullable)error;
+- (NSString * _Nullable)createIdentrityFileWithPassword:(NSString *)password certificate:(NSData *)certificate certificateKey:(NSData *)certificateKey withError:(NSError *__autoreleasing  _Nullable * _Nullable)error;
 
 #endif
 
@@ -110,6 +110,15 @@ NS_ASSUME_NONNULL_END
         return nil;
     }
 
+    if ( CFArrayGetCount(identityImportItems) == 0 ) {
+        if ( error != nil ) {
+            NSUInteger errorCode = CRHTTPSInvalidIdentityError;
+            NSString *errorMessage = NSLocalizedString(@"Unable to parse PKCS12 identity file.",);
+            *error = [[NSError alloc] initWithDomain:CRHTTPSErrorDomain code:errorCode userInfo:@{NSLocalizedDescriptionKey: errorMessage, CRHTTPSIdentityPathKey: identityFilePath ? : @"(null)"}];
+        }
+        return nil;
+    }
+
     CFDictionaryRef identityDictionary = CFArrayGetValueAtIndex(identityImportItems, 0);
     CFArrayRef certificateImportItems = CFDictionaryGetValue(identityDictionary, kSecImportItemCertChain);
     SecIdentityRef identity = (SecIdentityRef)CFDictionaryGetValue(identityDictionary, kSecImportItemIdentity);
@@ -145,7 +154,7 @@ NS_ASSUME_NONNULL_END
     
     NSString *password = NSUUID.UUID.UUIDString;
     
-    NSString *identityPath = [self creaIdentrityFileWithPassword:password certificate:certContents certificateKey:keyContents withError:error];
+    NSString *identityPath = [self createIdentrityFileWithPassword:password certificate:certContents certificateKey:keyContents withError:error];
     if ( identityPath.length == 0 ) {
         return nil;
     }
@@ -277,16 +286,34 @@ NS_ASSUME_NONNULL_END
 
 #else
 
-- (NSString *)creaIdentrityFileWithPassword:(NSString *)password certificate:(NSData *)certificate certificateKey:(NSData *)certificateKey withError:(NSError * _Nullable __autoreleasing * _Nullable)error {
+- (NSString *)createIdentrityFileWithPassword:(NSString *)password certificate:(NSData *)certificate certificateKey:(NSData *)certificateKey withError:(NSError * _Nullable __autoreleasing * _Nullable)error {
     
     // Attempt to parse cert as DER encoded
     const unsigned char *cert_data = (unsigned char *)certificate.bytes;
-    X509 *cert = d2i_X509(NULL, &cert_data, certificate.length);
-    if ( cert == NULL ) {
+    const unsigned char *cert_data_end = cert_data + certificate.length;
+    X509 *cert = d2i_X509(NULL, &cert_data, cert_data_end - cert_data);
+    STACK_OF(X509) *ca = NULL;
+    if ( cert ) {
+        // Read remain cert into ca.
+        X509 *ca_cert;
+        while ((ca_cert = d2i_X509(NULL, &cert_data, cert_data_end - cert_data))) {
+            if (!ca)
+                ca = sk_X509_new_null();
+            sk_X509_push(ca, ca_cert);
+        }
+    } else {
         // Attempt to parse cert as PEM encoded
         BIO *bpCert = BIO_new_mem_buf(certificate.bytes, (int)certificate.length);
         cert = PEM_read_bio_X509(bpCert, NULL, NULL, NULL);
-        if ( cert == NULL ) {
+        if ( cert ) {
+            // Read remain cert into ca.
+            X509 *ca_cert;
+            while ((ca_cert = PEM_read_bio_X509(bpCert, NULL, NULL, NULL))) {
+                if (!ca)
+                    ca = sk_X509_new_null();
+                sk_X509_push(ca, ca_cert);
+            }
+        } else {
             char *err = ERR_error_string(ERR_get_error(), NULL);
             if ( error != nil ) {
                 *error = [NSError errorWithDomain:CRHTTPSErrorDomain code:CRHTTPSInvalidCertificateError userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithUTF8String:err] ? : @"(null)"}];
@@ -318,7 +345,7 @@ NS_ASSUME_NONNULL_END
     
     NSString *identityPath = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
     
-    PKCS12 *p12 = PKCS12_create(password.UTF8String, identityPath.lastPathComponent.UTF8String, key, cert, NULL, 0, 0, 0, 0, 0);
+    PKCS12 *p12 = PKCS12_create(password.UTF8String, identityPath.lastPathComponent.UTF8String, key, cert, ca, 0, 0, 0, 0, 0);
     if ( p12 == NULL ) {
         ERR_print_errors_fp(stderr);
         char *err = ERR_error_string(ERR_get_error(), NULL);
@@ -330,6 +357,8 @@ NS_ASSUME_NONNULL_END
         return nil;
     }
 
+    if (ca)
+        sk_X509_pop_free(ca, X509_free);
     X509_free(cert);
     EVP_PKEY_free(key);
     
